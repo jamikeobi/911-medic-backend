@@ -1,0 +1,8 @@
+SENDGRID ACCOUNT:
+email: joelubioka@gmail.com
+password: w84GUBUN7cgpXXf
+phone-number: 07033111481
+
+CLOUDINARY ACCOUNT:
+email: joelubioka@gmail.com
+password: 
