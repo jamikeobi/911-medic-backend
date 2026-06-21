@@ -62,11 +62,11 @@ app.use('/api/v1/patient', patientRoutes);
 app.use('/api/v1/consultations', consultationRoutes);  // ADD THIS
 app.use('/api/v1/emergencies', emergencyRoutes);      // ADD THIS
 app.use('/api/v1/hospitals', hospitalRoutes);         // ADD THIS
-app.use('/api/v1/payments', paymentRoutes);           // ADD THIS
+app.use('/api/v1/payments', paymentRoutes);     // ADD THIS
 
 // Health Check Endpoint
 app.get('/api/v1/health', (req, res) => {
-    res.status(200).json({ status: 'success', message: 'API is healthy || Server is running' });
+    res.status(200).json({ status: 'success', message: 'API is healthy || Server is running well!!!' });
 });
 
 // Notification Routes
