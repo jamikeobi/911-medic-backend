@@ -1,18 +1,72 @@
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
+require('dotenv-flow').config();
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// ─── Transporter Setup ───────────────────────────────────────────────────────
+// In development: use Mailtrap's SDK transport (emails caught in Mailtrap inbox,
+//   never reach real inboxes, great for testing)
+// In production: use Brevo's SMTP relay (real delivery)
+// Everything below this block is identical for both environments.
 
-const sendEmail = async (to, subject, html, from = process.env.EMAIL_FROM) => {
+let transporter;
+
+if (process.env.NODE_ENV === 'development') {
+  const { MailtrapTransport } = require('mailtrap');
+
+  transporter = nodemailer.createTransport(
+    MailtrapTransport({
+      token: process.env.MAILTRAP_TOKEN,
+    })
+  );
+
+  console.log('📧 Email: using Mailtrap (development)');
+} else {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: false, // false = STARTTLS on port 587
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  // Verify Brevo SMTP config on startup — catches bad credentials immediately
+  // instead of discovering it when the first real email fails in prod
+  transporter.verify((error) => {
+    if (error) {
+      console.error('❌ Email transporter error:', error.message);
+    } else {
+      console.log('✅ Email transporter ready (Brevo)');
+    }
+  });
+}
+
+// ─── Core Send Function ───────────────────────────────────────────────────────
+// All template functions below call this. If you ever swap providers again,
+// this is the only function that needs to change.
+
+const sendEmail = async (to, subject, html) => {
   try {
-    const msg = { to, from, subject, html };
-    await sgMail.send(msg);
-    console.log(`✅ Email sent to ${to}`);
-    return { success: true };
+    const info = await transporter.sendMail({
+      from: {
+        address: process.env.EMAIL_FROM,
+        name: process.env.EMAIL_FROM_NAME || '911Medic',
+      },
+      to,
+      subject,
+      html,
+    });
+
+    console.log(`✅ Email sent to ${to} | messageId: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error('SendGrid Error:', error.response?.body || error.message);
+    console.error('❌ Email send failed:', error.message);
     throw error;
   }
 };
+
+// ─── Email Templates ──────────────────────────────────────────────────────────
+// Nothing below this line changes regardless of environment or provider.
 
 // Patient Registration Welcome Email
 const sendPatientWelcomeEmail = async (patient) => {

@@ -6,3 +6,9 @@ phone-number: 07033111481
 CLOUDINARY ACCOUNT:
 email: joelubioka@gmail.com
 password: 
+
+BREVO ACCOUNT:
+email: jamikeobiwkelu@gmail.com
+
+MAILTRAP ACCOUNT:
+email:jamikeobikwelu@gmail.com
