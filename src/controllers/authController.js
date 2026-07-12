@@ -84,8 +84,12 @@ exports.patientRegister = catchAsync(async (req, res, next) => {
     location,
   });
 
-  // Send welcome email
-  await sendPatientWelcomeEmail(user);
+  // Send welcome email — failure here should NOT fail the registration
+  try {
+    await sendPatientWelcomeEmail(user);
+  } catch (emailError) {
+    return next(new AppError('Registration successful, but failed to send welcome email', 500));
+  }
 
   res.status(201).json({
     status: 'success',
