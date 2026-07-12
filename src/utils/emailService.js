@@ -1,5 +1,4 @@
 const nodemailer = require('nodemailer');
-require('dotenv-flow').config();
 
 // ─── Transporter Setup ───────────────────────────────────────────────────────
 // In development: use Mailtrap's SDK transport (emails caught in Mailtrap inbox,
