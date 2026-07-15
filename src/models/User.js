@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Password is required'],
         minlength: 6,
-        select: false, // Do not return password by default
+        select: false,
     },
     role: {
         type: String,
@@ -31,17 +31,27 @@ const userSchema = new mongoose.Schema({
         default: 'patient',
     },
     isActive: {
-        type: Boolean, // Indicates if the user account is active
+        type: Boolean,
         default: true,
     },
-    profileImage: String, // URL to the user's profile image
+    profileImage: String,
     createdAt: {
-        type: Date, // Timestamp of when the user was created
+        type: Date,
         default: Date.now,
+    },
+
+    // Password reset fields
+    passwordResetToken: {
+        type: String,
+        select: false, // never returned in queries by default
+    },
+    passwordResetExpires: {
+        type: Date,
+        select: false, // same — no reason to expose this
     },
 },
     {
-        timestamps: true, // Automatically add createdAt and updatedAt fields
+        timestamps: true,
     }
 );
 

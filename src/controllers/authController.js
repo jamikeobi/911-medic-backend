@@ -7,6 +7,9 @@ const { generateToken } = require('../utils/generateToken');
 const {
   sendPatientWelcomeEmail,
   sendSpecialistRegistrationEmail,
+  sendPasswordResetEmail,
+  sendPasswordChangedEmail,
+  sendPasswordResetSuccessEmail,
   sendEmail
 } = require('../utils/emailService');
 const { uploadToCloudinary } = require('../utils/fileUpload');
@@ -161,7 +164,11 @@ exports.specialistRegister = catchAsync(async (req, res, next) => {
   });
 
   // Send registration email
-  await sendSpecialistRegistrationEmail(user, specialist);
+  try {
+    await sendSpecialistRegistrationEmail(user, specialist);
+  } catch (emailError) {
+    return next(new AppError('Registration submitted, but failed to send confirmation email. Please check your email settings.', 500));
+  }
 
   res.status(201).json({
     status: 'success',
@@ -193,23 +200,29 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
   user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
   await user.save();
 
+  // TEMPORARY DEBUG
+  console.log('Raw token (sent in email):', resetToken);
+  console.log('Hashed token (saved to DB):', user.passwordResetToken);
+
   // Send email with reset link
   const resetUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/reset-password/${resetToken}`;
   
-  await sendEmail(
-    user.email,
-    'Password Reset Request',
-    `
-      <h2>Reset Your Password</h2>
-      <p>Click the link below to reset your password:</p>
-      <a href="${resetUrl}">${resetUrl}</a>
-      <p>This link expires in 10 minutes.</p>
-    `
-  );
+  // Email is non-fatal here too, but we do want to tell the user if it fails
+  // so they know to try again — unlike registration where email is a side effect
+  try {
+    await sendPasswordResetEmail(user, resetUrl);
+  } catch (emailError) {
+    console.error('❌ Password reset email error:', emailError.message);
+    // Roll back the token if email fails — no point having an unusable token saved
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+    return next(new AppError('Failed to send reset email. Please try again.', 500));
+  }
 
   res.status(200).json({
     status: 'success',
-    message: 'Password reset link sent to email',
+    message: 'Password reset link sent to email with token: ' + resetToken,
   });
 });
 
@@ -219,6 +232,22 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
   const { password } = req.body;
 
   const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+  // TEMPORARY DEBUG — remove after fixing
+  console.log('Token received:', token);
+  console.log('Token length:', token.length);
+  console.log('Hashed token:', hashedToken);
+  console.log('Current time:', new Date());
+
+  // Check without expiry first to rule out token mismatch vs expiry
+  const userByToken = await User.findOne({ passwordResetToken: hashedToken });
+  console.log('User found by token (ignoring expiry):', userByToken ? userByToken.email : 'NOT FOUND');
+
+  if (userByToken) {
+    console.log('Token expires at:', new Date(userByToken.passwordResetExpires));
+    console.log('Token expired?', userByToken.passwordResetExpires < Date.now());
+  }
+
   const user = await User.findOne({
     passwordResetToken: hashedToken,
     passwordResetExpires: { $gt: Date.now() },
@@ -232,6 +261,12 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
   user.passwordResetToken = undefined;
   user.passwordResetExpires = undefined;
   await user.save();
+
+  try {
+    await sendPasswordResetSuccessEmail(user);
+  } catch (emailError) {
+    console.error('Password reset confirmation email failed (non-fatal):', emailError.message);
+  }
 
   res.status(200).json({
     status: 'success',
@@ -251,6 +286,15 @@ exports.changePassword = catchAsync(async (req, res, next) => {
 
   user.password = newPassword;
   await user.save();
+
+
+  // Security notification — non-fatal, password is already changed successfully
+  // but always attempt it so the user knows their password was modified
+  try {
+    await sendPasswordChangedEmail(user);
+  } catch (emailError) {
+    return next(new AppError('Password changed, but failed to send notification email. Please check your email settings.', 500));
+  }
 
   res.status(200).json({
     status: 'success',

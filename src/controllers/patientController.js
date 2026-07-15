@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Patient = require('../models/Patient');
+const Specialist = require('../models/Specialist');
 const Consultation = require('../models/Consultation');
 const Emergency = require('../models/Emergency');
 const Hospital = require('../models/Hospital');
@@ -15,24 +16,59 @@ const { uploadToCloudinary } = require('../utils/fileUpload');
 
 // Book consultation and notify the patient of their successful booking via a notification and email, also notify the specialist of the new booking via a notification and email. The specialist will then have to confirm the booking before it is finalized.
 exports.bookConsultation = catchAsync(async (req, res, next) => {
-    const consultationData = {
+    const {
+        specialistId,
+        patientName,
+        patientEmail,
+        patientPhone,
+        age,
+        gender,
+        location,
+        forWhom,
+        otherPerson,
+        consultationType,
+        specialty,
+        timeframe,
+        description,
+        amount,
+        paymentMethod,
+        transactionRef,
+    } = req.body;
+
+    const consultation = await Consultation.create({
         patientId: req.user.id,
-        ...req.body,
-        status: 'pending',
-    };
+        specialistId,
+        patientName,
+        patientEmail,
+        patientPhone,
+        age,
+        gender,
+        location,
+        forWhom,
+        otherPerson,
+        consultationType,
+        specialty,
+        timeframe,
+        description,
+        amount,
+        paymentMethod,
+        transactionRef,
+        status: 'pending',           // always pending on creation
+        paymentStatus: 'unconfirmed', // always unconfirmed on creation
+        // appointmentTime → set by specialist when they accept
+        // acceptedAt → set when specialist accepts
+        // completedAt → set when consultation ends
+    });
 
-    const consultation = await Consultation.create(consultationData);
-
-    // Send confirmation email to patient
     const patient = await User.findById(req.user.id);
-    const specialist = await Specialist.findById(req.body.specialistId);
+    const specialist = await Specialist.findById(specialistId);
+    const specialistUser = await User.findById(specialist.userId);
 
-
-    // Send email to specialist about new booking
-    await sendConsultationBookingEmail(patient, specialist, consultation);
-
-    //Send Notification to patient and specialist about new booking
-    
+    try {
+        await sendConsultationBookingEmail(consultation, patient, specialistUser ,specialist);
+    } catch (emailError) {
+        return next(new AppError('Consultation booked but failed to send email notification. Please contact support.', 500));
+    }
 
     res.status(201).json({
         status: 'success',

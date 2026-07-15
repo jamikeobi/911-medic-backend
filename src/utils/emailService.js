@@ -1,57 +1,44 @@
 const nodemailer = require('nodemailer');
 
 // ─── Transporter Setup ───────────────────────────────────────────────────────
-// In development: use Mailtrap's SDK transport (emails caught in Mailtrap inbox,
-//   never reach real inboxes, great for testing)
-// In production: use Brevo's SMTP relay (real delivery)
-// Everything below this block is identical for both environments.
+// Dev  → Mailtrap live SMTP (real sending infrastructure, check logs at
+//         https://mailtrap.io/sending/email_logs)
+// Prod → Brevo SMTP relay
+// Same code, different env vars. Zero code changes between environments.
 
-let transporter;
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
-if (process.env.NODE_ENV === 'development') {
-  const { MailtrapTransport } = require('mailtrap');
-
-  transporter = nodemailer.createTransport(
-    MailtrapTransport({
-      token: process.env.MAILTRAP_TOKEN,
-    })
-  );
-
-  console.log('📧 Email: using Mailtrap (development)');
-} else {
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: false, // false = STARTTLS on port 587
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  // Verify Brevo SMTP config on startup — catches bad credentials immediately
-  // instead of discovering it when the first real email fails in prod
-  transporter.verify((error) => {
-    if (error) {
-      console.error('❌ Email transporter error:', error.message);
-    } else {
-      console.log('✅ Email transporter ready (Brevo)');
-    }
-  });
-}
+transporter.verify((error) => {
+  if (error) {
+    console.error('❌ Email transporter error:', error.message);
+  } else {
+    const provider = process.env.NODE_ENV === 'development' ? 'Mailtrap' : 'GMAIL';
+    console.log(`✅ Email transporter ready (${provider})`);
+  }
+});
 
 // ─── Core Send Function ───────────────────────────────────────────────────────
-// All template functions below call this. If you ever swap providers again,
-// this is the only function that needs to change.
-
 const sendEmail = async (to, subject, html) => {
+  // In development, redirect ALL emails to your own address
+  // so Mailtrap's demo domain restriction doesn't block sends
+  const recipient = process.env.NODE_ENV === 'development'
+    ? process.env.EMAIL_TO
+    : to;
   try {
     const info = await transporter.sendMail({
       from: {
         address: process.env.EMAIL_FROM,
         name: process.env.EMAIL_FROM_NAME || '911Medic',
       },
-      to,
+      to: recipient,
       subject,
       html,
     });
@@ -63,6 +50,7 @@ const sendEmail = async (to, subject, html) => {
     throw error;
   }
 };
+
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
 // Nothing below this line changes regardless of environment or provider.
@@ -156,9 +144,281 @@ const sendSpecialistRejectionEmail = async (specialist, reason) => {
   `;
   await sendEmail(specialist.email, 'Application Status Update', html);
 };
+// Password Reset Email
+const sendPasswordResetEmail = async (user, resetUrl) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px; border-radius: 10px;">
+      
+      <!-- Header -->
+      <div style="background: linear-gradient(135deg, #dc3545, #c82333); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">🔐 Password Reset</h1>
+        <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0 0; font-size: 14px;">911Medic Security</p>
+      </div>
+
+      <!-- Body -->
+      <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
+        <p style="font-size: 16px; color: #333;">Hi <strong>${user.fullName}</strong>,</p>
+        <p style="color: #555; line-height: 1.6;">
+          We received a request to reset the password for your 911Medic account. 
+          Click the button below to set a new password.
+        </p>
+
+        <!-- CTA Button -->
+        <div style="text-align: center; margin: 35px 0;">
+          <a href="${resetUrl}" 
+             style="background: linear-gradient(135deg, #dc3545, #c82333); 
+                    color: white; 
+                    padding: 14px 35px; 
+                    text-decoration: none; 
+                    border-radius: 6px; 
+                    font-size: 16px; 
+                    font-weight: bold;
+                    display: inline-block;">
+            Reset My Password
+          </a>
+        </div>
+
+        <!-- Expiry Warning -->
+        <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 15px; border-radius: 4px; margin: 20px 0;">
+          <p style="margin: 0; color: #856404; font-size: 14px;">
+            ⏰ <strong>This link expires in 10 minutes.</strong> If you didn't request this, you can safely ignore this email.
+          </p>
+        </div>
+
+        <!-- Fallback URL -->
+        <p style="color: #888; font-size: 13px;">
+          If the button doesn't work, copy and paste this link into your browser:
+        </p>
+        <p style="background: #f4f4f4; padding: 10px; border-radius: 4px; font-size: 12px; word-break: break-all; color: #555;">
+          ${resetUrl}
+        </p>
+
+        <!-- Security Note -->
+        <div style="border-top: 1px solid #eee; margin-top: 25px; padding-top: 20px;">
+          <p style="color: #888; font-size: 13px; margin: 0;">
+            🔒 For your security, this link can only be used once and will expire automatically. 
+            If you didn't request a password reset, please contact us immediately at 
+            <a href="mailto:support@911medic.com" style="color: #dc3545;">support@911medic.com</a>.
+          </p>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <p style="text-align: center; color: #aaa; font-size: 12px; margin-top: 20px;">
+        © 2024 911Medic. All rights reserved.<br>
+        This is an automated message, please do not reply.
+      </p>
+
+    </div>
+  `;
+
+  await sendEmail(user.email, '🔐 Reset Your 911Medic Password', html);
+};
+
+// Password Changed Notification Email
+const sendPasswordChangedEmail = async (user) => {
+  const changedAt = new Date().toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff;">
+      
+      <!-- Top accent bar -->
+      <div style="height: 4px; background: #0d6efd;"></div>
+
+      <!-- Header -->
+      <div style="padding: 40px 40px 0 40px;">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #0d6efd; letter-spacing: 1.2px; text-transform: uppercase;">911Medic</p>
+        <h1 style="margin: 12px 0 0 0; font-size: 22px; font-weight: 600; color: #1a1a1a; line-height: 1.3;">
+          Your password was changed
+        </h1>
+      </div>
+
+      <!-- Body -->
+      <div style="padding: 28px 40px 0 40px;">
+        <p style="margin: 0; font-size: 15px; color: #444; line-height: 1.7;">
+          Hi ${user.fullName},
+        </p>
+        <p style="margin: 16px 0 0 0; font-size: 15px; color: #444; line-height: 1.7;">
+          This is a confirmation that the password for your 911Medic account 
+          (<strong style="color: #1a1a1a;">${user.email}</strong>) was changed.
+        </p>
+
+        <!-- Detail card -->
+        <div style="margin: 28px 0 0 0; background: #f7f8fa; border-radius: 8px; padding: 20px 24px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0; width: 40%;">Action</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">Password changed</td>
+            </tr>
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0;">Time</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">${changedAt}</td>
+            </tr>
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0;">Account</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">${user.email}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Warning block -->
+        <div style="margin: 28px 0 0 0; border: 1px solid #ffd0d0; background: #fff8f8; border-radius: 8px; padding: 20px 24px;">
+          <p style="margin: 0; font-size: 14px; font-weight: 600; color: #c0392b;">
+            Didn't make this change?
+          </p>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #555; line-height: 1.6;">
+            If you didn't change your password, your account may be at risk. 
+            Reset your password immediately and contact our support team.
+          </p>
+          <div style="margin-top: 16px;">
+            <a href="https://911medic.com/forgot-password" 
+               style="display: inline-block; background: #c0392b; color: #ffffff; font-size: 13px; font-weight: 600; padding: 10px 20px; border-radius: 5px; text-decoration: none;">
+              Secure My Account
+            </a>
+            <a href="mailto:support@911medic.com" 
+               style="display: inline-block; margin-left: 10px; font-size: 13px; color: #c0392b; text-decoration: underline; line-height: 38px;">
+              Contact Support
+            </a>
+          </div>
+        </div>
+
+        <p style="margin: 28px 0 0 0; font-size: 14px; color: #888; line-height: 1.7;">
+          If this was you, no further action is needed. You can continue using your account normally.
+        </p>
+      </div>
+
+      <!-- Divider -->
+      <div style="margin: 40px 40px 0 40px; border-top: 1px solid #ebebeb;"></div>
+
+      <!-- Footer -->
+      <div style="padding: 24px 40px 40px 40px;">
+        <p style="margin: 0; font-size: 12px; color: #aaa; line-height: 1.6;">
+          This is an automated security notification from 911Medic. 
+          Please do not reply to this email.<br>
+          &copy; ${new Date().getFullYear()} 911Medic. All rights reserved.
+        </p>
+      </div>
+
+    </div>
+  `;
+
+  await sendEmail(user.email, 'Your 911Medic password was changed', html);
+};
+
+// Password Reset Success Notification Email
+const sendPasswordResetSuccessEmail = async (user) => {
+  const resetAt = new Date().toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff;">
+
+      <!-- Top accent bar -->
+      <div style="height: 4px; background: #0d6efd;"></div>
+
+      <!-- Header -->
+      <div style="padding: 40px 40px 0 40px;">
+        <p style="margin: 0; font-size: 13px; font-weight: 600; color: #0d6efd; letter-spacing: 1.2px; text-transform: uppercase;">911Medic</p>
+        <h1 style="margin: 12px 0 0 0; font-size: 22px; font-weight: 600; color: #1a1a1a; line-height: 1.3;">
+          Your password has been reset
+        </h1>
+      </div>
+
+      <!-- Body -->
+      <div style="padding: 28px 40px 0 40px;">
+        <p style="margin: 0; font-size: 15px; color: #444; line-height: 1.7;">
+          Hi ${user.fullName},
+        </p>
+        <p style="margin: 16px 0 0 0; font-size: 15px; color: #444; line-height: 1.7;">
+          The password for your 911Medic account 
+          (<strong style="color: #1a1a1a;">${user.email}</strong>) 
+          was successfully reset. You can now log in with your new password.
+        </p>
+
+        <!-- Detail card -->
+        <div style="margin: 28px 0 0 0; background: #f7f8fa; border-radius: 8px; padding: 20px 24px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0; width: 40%;">Action</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">Password reset</td>
+            </tr>
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0;">Time</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">${resetAt}</td>
+            </tr>
+            <tr>
+              <td style="font-size: 13px; color: #888; padding: 6px 0;">Account</td>
+              <td style="font-size: 13px; color: #1a1a1a; font-weight: 500; padding: 6px 0;">${user.email}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Login CTA -->
+        <div style="margin: 28px 0 0 0; text-align: left;">
+          <a href="https://911medic.com/login"
+             style="display: inline-block; background: #0d6efd; color: #ffffff; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 5px; text-decoration: none;">
+            Log In to Your Account
+          </a>
+        </div>
+
+        <!-- Warning block -->
+        <div style="margin: 28px 0 0 0; border: 1px solid #ffd0d0; background: #fff8f8; border-radius: 8px; padding: 20px 24px;">
+          <p style="margin: 0; font-size: 14px; font-weight: 600; color: #c0392b;">
+            Didn't request this reset?
+          </p>
+          <p style="margin: 8px 0 0 0; font-size: 14px; color: #555; line-height: 1.6;">
+            If you did not request a password reset, someone may have had access 
+            to your email. Contact our support team immediately.
+          </p>
+          <div style="margin-top: 16px;">
+            <a href="mailto:support@911medic.com"
+               style="display: inline-block; background: #c0392b; color: #ffffff; font-size: 13px; font-weight: 600; padding: 10px 20px; border-radius: 5px; text-decoration: none;">
+              Contact Support
+            </a>
+          </div>
+        </div>
+
+        <p style="margin: 28px 0 0 0; font-size: 14px; color: #888; line-height: 1.7;">
+          For security, the reset link you used has been permanently invalidated 
+          and cannot be used again.
+        </p>
+      </div>
+
+      <!-- Divider -->
+      <div style="margin: 40px 40px 0 40px; border-top: 1px solid #ebebeb;"></div>
+
+      <!-- Footer -->
+      <div style="padding: 24px 40px 40px 40px;">
+        <p style="margin: 0; font-size: 12px; color: #aaa; line-height: 1.6;">
+          This is an automated security notification from 911Medic.
+          Please do not reply to this email.<br>
+          &copy; ${new Date().getFullYear()} 911Medic. All rights reserved.
+        </p>
+      </div>
+
+    </div>
+  `;
+
+  await sendEmail(user.email, 'Your 911Medic password has been reset', html);
+};
 
 // Consultation Booking Confirmation (Patient)
-const sendConsultationBookingEmail = async (booking, patient, specialist) => {
+const sendConsultationBookingEmail = async (booking, patient,specialistUser, specialist) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #0d6efd;">Consultation Booking Confirmed</h2>
@@ -166,7 +426,7 @@ const sendConsultationBookingEmail = async (booking, patient, specialist) => {
       <p>Your consultation has been successfully booked. Here are the details:</p>
       <div style="background: #f4f4f4; padding: 15px; border-radius: 5px; margin: 20px 0;">
         <h3>Booking Details:</h3>
-        <p><strong>Specialist:</strong> Dr. ${specialist.fullName} (${specialist.speciality})</p>
+        <p><strong>Specialist:</strong> Dr. ${specialistUser.fullName} (${specialist.speciality})</p>
         <p><strong>Type:</strong> ${booking.consultationType}</p>
         <p><strong>Fee:</strong> ₦${booking.amount?.toLocaleString() || '15,000'}</p>
         <p><strong>Status:</strong> <span style="color: #ffc107;">Awaiting Specialist Confirmation</span></p>
@@ -323,4 +583,7 @@ module.exports = {
   sendAmbulanceDispatchedEmail,
   sendPaymentConfirmationEmail,
   sendHospitalBookingEmail,
+  sendPasswordResetEmail,
+  sendPasswordChangedEmail,
+  sendPasswordResetSuccessEmail,
 };
