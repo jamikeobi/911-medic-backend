@@ -27,7 +27,28 @@ const app = express();
 
 // Security Middleware with detailed configuration
 app.use(helmet()); // Set various HTTP headers to enhance security
-app.use(cors());
+
+// CORS Middleware with specific configuration
+const allowedOrigins = [
+    'http://localhost:4200', // Local development (Angular Dev server)
+    'https://www.example.com', // Vercel Prod
+    process.env.FRONTEND_URL, // Environment variable for frontend URL
+].filter(Boolean); // Filter out any undefined values
+
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests from specific origins (Postman, mobile apps, server-to-server)
+        if (!origin) return callback(null, true); // Allow requests with no origin (like mobile apps or Postman)
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true); // Allow the request if the origin is in the allowed list
+        } else {
+            callback(new AppError(`Not allowed by CORS. CORS blocked: ${origin}`, 403)); // Reject the request if the origin is not allowed
+        }
+    },
+    credentials: true, // Allow cookies to be sent with requests
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Allowed HTTP methods
+    allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
+}));
 
 // Rate Limiting
 const limiter = rateLimit({
@@ -55,14 +76,14 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // Routes - ADD ALL ROUTES
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/admin', adminRoutes);
-app.use('/api/v1/specialist', specialistRoutes);
-app.use('/api/v1/patient', patientRoutes);
-app.use('/api/v1/consultations', consultationRoutes);  // ADD THIS
-app.use('/api/v1/emergencies', emergencyRoutes);      // ADD THIS
-app.use('/api/v1/hospitals', hospitalRoutes);         // ADD THIS
-app.use('/api/v1/payments', paymentRoutes);     // ADD THIS
+app.use('/api/v1/auth', authRoutes); // Authentication routes
+app.use('/api/v1/admin', adminRoutes); // Admin routes
+app.use('/api/v1/specialist', specialistRoutes); // Specialist routes
+app.use('/api/v1/patient', patientRoutes); // Patient routes
+app.use('/api/v1/consultations', consultationRoutes); // Consultation routes
+app.use('/api/v1/emergencies', emergencyRoutes);  // Emergency routes
+app.use('/api/v1/hospitals', hospitalRoutes);  // Hospital routes
+app.use('/api/v1/payments', paymentRoutes); // Payment routes
 
 // Health Check Endpoint
 app.get('/api/v1/health', (req, res) => {

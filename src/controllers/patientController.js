@@ -106,12 +106,19 @@ exports.requestAmbulance = catchAsync(async (req, res, next) => {
 
 // Get patient consultations
 exports.getConsultations = catchAsync(async (req, res, next) => {
-    const consultations = await Consultation.find({ patientId: req.user.id })
-        .populate('specialistId')
+    const consultations = await Consultation.find({ patientId: req.user.id, specialistId: { $ne: null} })
+        .populate({
+            path: 'specialistId',
+            populate: {
+                path: 'userId',        // nested populate — gets the User inside Specialist
+                select: 'fullName email phone profileImage'
+            }
+        })
         .sort('-createdAt');
 
     res.status(200).json({
         status: 'success',
+        results: consultations.length,
         data: consultations,
     });
 });
