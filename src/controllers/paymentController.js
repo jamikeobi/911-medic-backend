@@ -3,7 +3,8 @@ const Consultation = require('../models/Consultation');
 const User = require('../models/User');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
-const { sendEmail } = require('../config/sendgrid');
+const { sendPaymentConfirmationEmail } = require('../utils/emailService');
+const { createNotification } = require('./notificationController');
 const crypto = require('crypto');
 
 // Create payment record

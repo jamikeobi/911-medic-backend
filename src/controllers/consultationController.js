@@ -4,7 +4,11 @@ const User = require('../models/User');
 const Payment = require('../models/Payment');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
-const { sendEmail, emailTemplates } = require('../config/sendgrid');
+const {
+    sendConsultationBookingEmail,
+    sendConsultationRequestEmail,
+    sendAppointmentConfirmedEmail,
+} = require('../utils/emailService');
 const { createNotification } = require('./notificationController');
 
 // Get all consultations (with filters)
@@ -24,7 +28,7 @@ exports.getAllConsultations = catchAsync(async (req, res, next) => {
 
     const consultations = await Consultation.find(filter)
         .populate('patientId', 'fullName email phone')
-        .populate('specialistId', 'fullName speciality')
+        .populate('specialistId', 'speciality')
         .sort('-createdAt');
 
     res.status(200).json({
@@ -52,49 +56,65 @@ exports.getConsultation = catchAsync(async (req, res, next) => {
 
 // Create consultation (book appointment)
 exports.createConsultation = catchAsync(async (req, res, next) => {
-    const consultationData = {
+    const {
+        specialistId, patientName, patientEmail, patientPhone,
+        age, gender, location, forWhom, otherPerson,
+        consultationType, specialty, timeframe, description,
+        amount, paymentMethod, transactionRef,
+    } = req.body;
+
+    const consultation = await Consultation.create({
         patientId: req.user.id,
-        ...req.body,
+        specialistId,
+        patientName, patientEmail, patientPhone,
+        age, gender, location, forWhom, otherPerson,
+        consultationType, specialty, timeframe, description,
+        amount, paymentMethod, transactionRef,
         status: 'pending',
         paymentStatus: 'unconfirmed',
-    };
+    });
 
-    const consultation = await Consultation.create(consultationData);
-
-    // Send confirmation email to patient
     const patient = await User.findById(req.user.id);
-    const specialist = await Specialist.findById(req.body.specialistId);
+    const specialist = await Specialist.findById(specialistId);
+    const specialistUser = await User.findById(specialist.userId);
 
-    // Create Notification for patient
-    await createNotification(
-        patient._id,
-        'Consultation Booked',
-        `Your consultation with Dr. ${specialist.fullName} has been booked. We will notify you once the specialist confirms the appointment time.`,
-        'info',
-        'consultation',
-        { consultationId: consultation._id }
-    )
+    // Notifications — non-fatal
+    try {
+        await createNotification(
+            patient._id,
+            'Consultation Booked',
+            `Your consultation with Dr. ${specialistUser.fullName} has been booked. Awaiting specialist confirmation.`,
+            'info', 'consultation',
+            { consultationId: consultation._id }
+        );
+    } catch (e) {
+        console.error('Patient notification failed:', e.message);
+    }
 
-    // Create Notification for specialist
-    await createNotification(
-        specialist.userId._id,
-        'New Consultation Request',
-        `You have a new consultation request from ${patient.fullName}. Please review and accept or reject the request.`,
-        'info',
-        'consultation',
-        { consultationId: consultation._id }
-    )
+    try {
+        await createNotification(
+            specialist.userId,
+            'New Consultation Request',
+            `You have a new consultation request from ${patient.fullName}. Please review and respond.`,
+            'info', 'consultation',
+            { consultationId: consultation._id }
+        );
+    } catch (e) {
+        console.error('Specialist notification failed:', e.message);
+    }
 
-    await sendEmail(
-        patient.email,
-        'Consultation Booking Confirmed',
-        `
-      <h2>Booking Confirmed</h2>
-      <p>Dear ${patient.fullName},</p>
-      <p>Your consultation with Dr. ${specialist.fullName} has been booked.</p>
-      <p>We will notify you once the specialist confirms the appointment time.</p>
-    `
-    );
+    // Emails — non-fatal
+    try {
+        await sendConsultationBookingEmail(consultation, patient, specialistUser, specialist);
+    } catch (e) {
+        console.error('Booking confirmation email failed:', e.message);
+    }
+
+    try {
+        await sendConsultationRequestEmail(consultation, patient, specialistUser);
+    } catch (e) {
+        console.error('Specialist notification email failed:', e.message);
+    }
 
     res.status(201).json({
         status: 'success',
@@ -113,32 +133,64 @@ exports.updateConsultationStatus = catchAsync(async (req, res, next) => {
         return next(new AppError('Consultation not found', 404));
     }
 
-    const oldStatus = consultation.status;
     consultation.status = status;
     if (appointmentTime) consultation.appointmentTime = appointmentTime;
     if (notes) consultation.notes = notes;
-
     if (status === 'accepted') consultation.acceptedAt = Date.now();
     if (status === 'completed') consultation.completedAt = Date.now();
-
     await consultation.save();
 
-    // Send notification email based on status change
     const patient = await User.findById(consultation.patientId);
     const specialist = await Specialist.findById(consultation.specialistId);
+    const specialistUser = await User.findById(specialist.userId);
 
     if (status === 'accepted') {
-        await sendEmail(
-            patient.email,
-            'Consultation Appointment Confirmed',
-            `
-        <h2>Appointment Confirmed</h2>
-        <p>Dear ${patient.fullName},</p>
-        <p>Your appointment with Dr. ${specialist.fullName} has been confirmed.</p>
-        <p><strong>Date & Time:</strong> ${new Date(appointmentTime).toLocaleString()}</p>
-        <p>Please log in to your dashboard for any changes.</p>
-      `
-        );
+        // Notify patient
+        try {
+            await createNotification(
+                patient._id,
+                'Appointment Confirmed',
+                `Dr. ${specialistUser.fullName} has confirmed your consultation on ${new Date(appointmentTime).toLocaleString()}.`,
+                'success', 'consultation',
+                { consultationId: consultation._id }
+            );
+        } catch (e) {
+            console.error('Appointment notification failed:', e.message);
+        }
+
+        try {
+            await sendAppointmentConfirmedEmail(consultation, patient, specialistUser, specialist);
+        } catch (e) {
+            console.error('Appointment confirmation email failed:', e.message);
+        }
+    }
+
+    if (status === 'completed') {
+        try {
+            await createNotification(
+                patient._id,
+                'Consultation Completed',
+                `Your consultation with Dr. ${specialistUser.fullName} has been marked as completed.`,
+                'success', 'consultation',
+                { consultationId: consultation._id }
+            );
+        } catch (e) {
+            console.error('Completion notification failed:', e.message);
+        }
+    }
+
+    if (status === 'cancelled') {
+        try {
+            await createNotification(
+                patient._id,
+                'Consultation Cancelled',
+                `Your consultation with Dr. ${specialistUser.fullName} has been cancelled.`,
+                'warning', 'consultation',
+                { consultationId: consultation._id }
+            );
+        } catch (e) {
+            console.error('Cancellation notification failed:', e.message);
+        }
     }
 
     res.status(200).json({
@@ -158,24 +210,47 @@ exports.cancelConsultation = catchAsync(async (req, res, next) => {
         return next(new AppError('Consultation not found', 404));
     }
 
+    // Only patient can cancel their own, or admin
+    if (
+        req.user.role === 'patient' &&
+        consultation.patientId.toString() !== req.user.id
+    ) {
+        return next(new AppError('You can only cancel your own consultations', 403));
+    }
+
     consultation.status = 'cancelled';
     consultation.cancellationReason = reason;
     await consultation.save();
 
-    // Notify both parties
     const patient = await User.findById(consultation.patientId);
     const specialist = await Specialist.findById(consultation.specialistId);
+    const specialistUser = await User.findById(specialist.userId);
 
-    await sendEmail(
-        patient.email,
-        'Consultation Cancelled',
-        `
-      <h2>Consultation Cancelled</h2>
-      <p>Dear ${patient.fullName},</p>
-      <p>Your consultation has been cancelled.</p>
-      <p><strong>Reason:</strong> ${reason || 'Not specified'}</p>
-    `
-    );
+    // Notify patient
+    try {
+        await createNotification(
+            patient._id,
+            'Consultation Cancelled',
+            `Your consultation with Dr. ${specialistUser.fullName} has been cancelled. Reason: ${reason || 'Not specified'}`,
+            'warning', 'consultation',
+            { consultationId: consultation._id }
+        );
+    } catch (e) {
+        console.error('Cancellation patient notification failed:', e.message);
+    }
+
+    // Notify specialist
+    try {
+        await createNotification(
+            specialist.userId,
+            'Consultation Cancelled',
+            `A consultation from ${patient.fullName} has been cancelled. Reason: ${reason || 'Not specified'}`,
+            'warning', 'consultation',
+            { consultationId: consultation._id }
+        );
+    } catch (e) {
+        console.error('Cancellation specialist notification failed:', e.message);
+    }
 
     res.status(200).json({
         status: 'success',
@@ -186,7 +261,10 @@ exports.cancelConsultation = catchAsync(async (req, res, next) => {
 // Get patient's consultations
 exports.getPatientConsultations = catchAsync(async (req, res, next) => {
     const consultations = await Consultation.find({ patientId: req.user.id })
-        .populate('specialistId')
+        .populate({
+            path: 'specialistId',
+            populate: { path: 'userId', select: 'fullName email phone profileImage' }
+        })
         .sort('-createdAt');
 
     res.status(200).json({
@@ -199,6 +277,10 @@ exports.getPatientConsultations = catchAsync(async (req, res, next) => {
 // Get specialist's consultations
 exports.getSpecialistConsultations = catchAsync(async (req, res, next) => {
     const specialist = await Specialist.findOne({ userId: req.user.id });
+    if (!specialist) {
+        return next(new AppError('Specialist profile not found', 404));
+    }
+
     const consultations = await Consultation.find({ specialistId: specialist._id })
         .populate('patientId', 'fullName email phone')
         .sort('-createdAt');

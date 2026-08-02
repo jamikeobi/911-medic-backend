@@ -91,7 +91,7 @@ exports.patientRegister = catchAsync(async (req, res, next) => {
   try {
     await sendPatientWelcomeEmail(user);
   } catch (emailError) {
-    return next(new AppError('Registration successful, but failed to send welcome email', 500));
+    console.error('Patient welcome email failed (non-fatal):', emailError.message);
   }
 
   res.status(201).json({
@@ -167,7 +167,7 @@ exports.specialistRegister = catchAsync(async (req, res, next) => {
   try {
     await sendSpecialistRegistrationEmail(user, specialist);
   } catch (emailError) {
-    return next(new AppError('Registration submitted, but failed to send confirmation email. Please check your email settings.', 500));
+    console.error('Specialist registration email failed (non-fatal):', emailError.message);
   }
 
   res.status(201).json({
@@ -290,11 +290,15 @@ exports.changePassword = catchAsync(async (req, res, next) => {
 
   // Security notification — non-fatal, password is already changed successfully
   // but always attempt it so the user knows their password was modified
-  try {
-    await sendPasswordChangedEmail(user);
-  } catch (emailError) {
-    return next(new AppError('Password changed, but failed to send notification email. Please check your email settings.', 500));
-  }
+  // try {
+  //   await sendPasswordChangedEmail(user);
+  // } catch (emailError) {
+  //   console.error('Password-changed email failed (non-fatal):', emailError.message);
+  // }
+
+  sendPatientWelcomeEmail(user).catch((err) => {
+    console.error('Patient welcome email failed (non-fatal):', err.message);
+  });
 
   res.status(200).json({
     status: 'success',
